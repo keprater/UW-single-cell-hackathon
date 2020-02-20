@@ -5,7 +5,7 @@ library(rqdatatable)
 library(synapser)
 
 #to login to synapse manually: synLogin("username", "password")
-synLogin()
+synLogin("","") #rememberMe=TRUE)
 
 system( paste0('tar -xvf ', synapser::synGet('syn21614190')$path) )
 system( 'gunzip home/dnanexus/6672/outs/filtered_feature_bc_matrix/matrix.mtx.gz' )
@@ -63,8 +63,8 @@ tags_6874  <- read.delim('home/dnanexus/6874/outs/filtered_feature_bc_matrix/bar
 #only need column 2 of gene_meta1 (gene names)
 #delete extra column in gene metadata:
 gene_metadata <- subset(gene_metadata, select=c(1,2))
-colnames(gene_metadata)[2] <- "gene_short_name"
-#need to make duplicated gene short names unique
+colnames(gene_metadata)[2] <- "gene_short_name" #Monocle requires this
+#need to make duplicated gene short names unique - Monocle requires this as well
 gene_metadata$gene_short_name <- make.names(gene_metadata$gene_short_name, unique=TRUE)
 
 #each rowname is a gene, from the features file:
@@ -88,6 +88,7 @@ colnames(dat_6829) <- tags_6829[,1]
 colnames(dat_6845) <- tags_6845[,1]
 colnames(dat_6874) <- tags_6874[,1]
 
+#label columns with appended sample IDs
 colnames(dat_6672) <- paste(colnames(dat_6672), "6672", sep="_")
 colnames(dat_6687) <- paste(colnames(dat_6687), "6687", sep="_")
 colnames(dat_6726) <- paste(colnames(dat_6726), "6726", sep="_")
@@ -97,7 +98,7 @@ colnames(dat_6829) <- paste(colnames(dat_6829), "6829", sep="_")
 colnames(dat_6845) <- paste(colnames(dat_6845), "6845", sep="_")
 colnames(dat_6874) <- paste(colnames(dat_6874), "6874", sep="_")
 
-#join the individual patient matrices into one
+#join the individual patient matrices into one cbind2 for matrices
 dat <- cbind2(dat_6672,dat_6687)
 dat <- cbind2(dat,dat_6726)
 dat <- cbind2(dat,dat_6774)
@@ -114,6 +115,7 @@ syn21598855 <- synapser::synGet(entity='syn21598855')
 metadata <- read_excel(syn21598855$path)
 head(metadata)
 metadata <- as.data.frame(metadata)
+#Remove spaces to help code!
 names(metadata)[names(metadata) == "Sample ID"] <- "ids"
 names(metadata)[names(metadata) == "Clinical DX"] <- "Clinical.DX"
 names(metadata)[names(metadata) == "path DX"] <- "path.DX"
@@ -121,8 +123,8 @@ names(metadata)[names(metadata) == "Apo E"] <- "ApoE"
 metadata$ids <- as.factor(metadata$ids)
 head(metadata)
 
-#this count threshold can be changed
-counts <- dat[rowSums(dat != 0) >= 250,]
+#this count threshold can be changed - may want to set a percentage threshold instead of a count
+counts <- dat[rowSums(dat != 0) >= 2,]
 dim(counts)
 
 #Make the cell_data_set (CDS) object for monocle:
@@ -144,6 +146,7 @@ head(gene_short_name)
 dim(gene_short_name)
 
 Labels = data.frame(colnames(counts))
+#Adds patient IDs to the rows
 Labels$ids <- ifelse(grepl("6672", Labels$colnames.counts.)==T, "6672",
                      ifelse(grepl("6687", Labels$colnames.counts.)==T, "6687",
                             ifelse(grepl("6726", Labels$colnames.counts.)==T, "6726",
@@ -153,6 +156,7 @@ Labels$ids <- ifelse(grepl("6672", Labels$colnames.counts.)==T, "6672",
                                                         ifelse(grepl("6845", Labels$colnames.counts.)==T, "6845", "6874")))))))
 
 
+#natural join is rqdatatable package
 Labels <- natural_join(Labels, metadata, 
                        by = "ids",
                        jointype = "FULL")
@@ -160,9 +164,9 @@ rownames(Labels) = colnames(counts)
 head(Labels)
 dim(Labels)
 
-#for later use, upload the marker gene data from mathys et al.
+#for later use, upload the marker gene data from mathys et al. - curated list of own
 p <- synapser::synGet('syn21618703')
-mathy_marker_genes <- read.csv(p$path,stringsAsFactors = F)
+mathys_marker_genes <- read.csv(p$path,stringsAsFactors = F)
 
 #preprocessing and creating a monocle object
 # must first unload synapser because causes multiple definitions of S4Vectors
@@ -182,6 +186,8 @@ cds_uw <- new_cell_data_set(counts,
 ### preprocessing and reduce dimensionality
 ### preprocessing includes library size normalization and regressing out pmi
 ### this takes a while
+##Can use + in residual model formula to add additional variables to regress out biology of non-interest
+#is each patient sample contributing to the variability #umis, #readnumber #barcodes as continuous variable to remove variability 
 cds_uw = preprocess_cds(cds_uw, num_dim = 30,method="PCA", norm_method="log", residual_model_formula_str="~PMI")
 cds_uw = reduce_dimension(cds_uw)
 cds_uw = cluster_cells(cds_uw)
@@ -192,6 +198,7 @@ cds_uw$Sex = cds_uw$SEX
 cds_uw$Samples = cds_uw$ids
 head(cds_uw$Sex)
 
+#partition is Monocle's idea of what cell identities are present based on 
 p1<-plot_cells(cds_uw, color_cells_by="partition",cell_size=.001,label_cell_groups=0,show_trajectory_graph=FALSE)+theme(
   legend.title = element_text(size = 10),
   legend.text = element_text(size = 10))+theme(legend.position = "none")
@@ -202,6 +209,7 @@ p3<-plot_cells(cds_uw, color_cells_by="Diagnosis",cell_size=.001,label_cell_grou
   legend.title = element_text(size = 10),
   legend.text = element_text(size = 8))
 p4<-plot_cells(cds_uw, color_cells_by="Samples",cell_size=.001,label_cell_groups=0,show_trajectory_graph=FALSE)
+#Cluster uses Louvain cluster detection method
 p6<-plot_cells(cds_uw, color_cells_by="cluster",cell_size=.1,label_cell_groups=0,show_trajectory_graph=FALSE)+theme(
   legend.title = element_text(size = 10),
   legend.text = element_text(size = 7),legend.key.size = unit(.5, "cm"),
@@ -210,9 +218,23 @@ p6<-plot_cells(cds_uw, color_cells_by="cluster",cell_size=.1,label_cell_groups=0
 grid.arrange(arrangeGrob(p1,p6, ncol=2),arrangeGrob(p3,p2,ncol=2),p4, heights=c(2,2,4), ncol=1)
 #dev.off()
 
+#######Differential Expression Code for individual cluster population##############
+#when call function - call library that it comes from
+#can subset cds_small <- cds_uw[,cds_uw@clusters$UMAP$partitions==10]
+##dim(cds_small)
+#May need to filter by highly variable genes to remove zeros
+eprs_model <- monocle3::fit_models(cds_uw, 
+                                   "~ePRS",
+                                   verbose = TRUE)
+#correcting for mult comps
+corrected_model <- monocle3::coefficient_table(eprs_model)
+
+#####Network Analysis Example#####
+
+
 #label marker genes, defined by mathys et al
 genes<-c()
-for (gene in unique(c(as.vector(mathy_marker_genes$gene.name),c("SYT1","SNAP25","GRIN1","GAD1","GAD2","SLC17A7","CAMK2A","NRGN","AQP4",
+for (gene in unique(c(as.vector(mathys_marker_genes$gene.name),c("SYT1","SNAP25","GRIN1","GAD1","GAD2","SLC17A7","CAMK2A","NRGN","AQP4",
                                                                 "GFAP","MBP","MOBP","PLP1","PDGFRA","VCAN","CD74","CSF1R","C3","FLT1","CLDN5")))){
   if (gene %in% rownames(cds_uw)){
     genes <- c(genes,which(rownames(cds_uw)==gene))
@@ -220,10 +242,12 @@ for (gene in unique(c(as.vector(mathy_marker_genes$gene.name),c("SYT1","SNAP25",
 }
 length(genes)
 
+#Monocle workflow - these steps are standard
 cds_subset = cds_uw[genes,]
 cds_subset = preprocess_cds(cds_subset, num_dim = 30,method="PCA",residual_model_formula_str="~PMI",norm_method="size_only")
 cds_subset = reduce_dimension(cds_subset)
 cds_subset = cluster_cells(cds_subset)
+#missing step learn_graph to determine trajectories for the nuclei in the dataset
 
 p1<-plot_cells(cds_subset, color_cells_by="partition",cell_size=.001,label_cell_groups=0,show_trajectory_graph=FALSE)+theme(
   legend.title = element_text(size = 10),
@@ -296,23 +320,25 @@ cds_subset$Diagnosis[cds_subset$ids!=6672]='AD'
 
 ## Identify Mic1 subcluster in UW data
 #l = c(l,as.vector(mathy_marker_genes$gene.name[mathy_marker_genes$subpopulation=='Mic0']))
-l = as.vector(mathy_marker_genes$gene.name[mathy_marker_genes$subpopulation=='Mic1'])
+cds_subset_sink <- cds_subset
+cds_uw_sink <- cds_uw
+l = as.vector(mathys_marker_genes$gene.name[mathys_marker_genes$subpopulation=='Mic1'])
 #l = c(l,as.vector(mathy_marker_genes$gene.name[mathy_marker_genes$subpopulation=='Mic2']))
 l = unique(l)
 length(l)
 inds = c()
 for (gene in l){
-  if ((gene %in% rownames(cds_uw))){
-    inds = c(inds,which(rownames(cds_uw)==gene))
+  if ((gene %in% rownames(cds_subset))){
+    inds = c(inds,which(rownames(cds_subset)==gene))
   }
 }
-cds_subset <- cds_uw[inds,cds_uw$broad.cell.type=='Mic']
+cds_subset <- cds_subset[inds,cds_subset$broad.cell.type=='Mic']
 cds_subset <- preprocess_cds(cds_subset, num_dim = 30,residual_model_formula_str="~PMI")
 cds_subset = reduce_dimension(cds_subset)
 cds_subset = cluster_cells(cds_subset)
 
 #cs<-cs[,cs$apoe>0]
-cs = cds_uw[,cds_uw$broad.cell.type=='Mic']
+cs = cds_subset[,cds_subset$broad.cell.type=='Mic']
 cs$Mic1 = cs$Sex
 cs$Mic1[clusters(cds_subset)==7]='Mic1'
 cs$Mic1[clusters(cds_subset)==11]='Mic1'
